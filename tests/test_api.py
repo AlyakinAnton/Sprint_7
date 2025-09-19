@@ -1,81 +1,132 @@
-import pytest
-from utils import create_unique_courier
 import requests
+import random
+import string
+import pytest
+import allure
+from data import *
 
 
-@pytest.mark.usefixtures("base_url")
-class TestApi:
-    @pytest.fixture(autouse=True)
-    def setup(self, base_url):
-        self.base_url = base_url
+@pytest.fixture
+def base_url():
+    return "https://qa-scooter.praktikum-services.ru/api/v1/"
 
-    def test_create_courier_successfully(self):
-        """Создать курьера"""
-        _, _, _ = create_unique_courier(self.base_url)
 
-    def test_duplicate_courier_creation_fails(self):
-        """Нельзя создать дублирующего курьера"""
-        login, password, first_name = create_unique_courier(self.base_url)
-        duplicate_response = requests.post(
-            f"{self.base_url}courier",
-            json={"login": login, "password": password, "firstName": first_name},
-        )
-        assert duplicate_response.status_code == 400, \
-            f"Повторная регистрация принята: {duplicate_response.text}"
+@pytest.fixture
+def registered_courier(base_url):
+    login, password, first_name = create_unique_courier(base_url)
+    return login, password, first_name
 
-    def test_authenticate_valid_credentials(self):
-        """Авторизация курьера с правильными данными"""
-        login, password, _ = create_unique_courier(self.base_url)
-        auth_response = requests.post(
-            f"{self.base_url}courier/login",
-            json={"login": login, "password": password},
-        )
-        assert auth_response.status_code == 200, \
-            f"Авторизация провалилась: {auth_response.text}"
 
-    def test_invalid_authentication(self):
-        """Авторизация с неправильными данными должна отказать"""
-        login, password, _ = create_unique_courier(self.base_url)
-        invalid_auth_response = requests.post(
-            f"{self.base_url}courier/login",
-            json={"login": login + "_invalid", "password": password},
-        )
-        assert invalid_auth_response.status_code == 400, \
-            f"Неправильная проверка аутентификации: {invalid_auth_response.text}"
+def generate_random_string(length):
+    letters = string.ascii_letters
+    return ''.join(random.choice(letters) for _ in range(length))
 
-    def test_create_order_with_color(self):
-        """Создание заказа с выбором цвета"""
-        order_payload = {
-            "firstName": "John",
-            "lastName": "Doe",
-            "address": "ул. Ленина, дом 1",
-            "metroStation": "1",
-            "phone": "+79991234567",
-            "rentTime": 1,
-            "deliveryDate": "2025-01-01",
-            "color": ["BLACK"],
-        }
-        response = requests.post(f"{self.base_url}orders", json=order_payload)
-        assert response.status_code == 201, f"Ошибка создания заказа: {response.text}"
-        assert "track" in response.json(), "Трек-код не присутствует в ответе"
 
-    def test_create_order_without_color(self):
-        """Создание заказа без выбора цвета"""
-        order_payload = {
-            "firstName": "Jane",
-            "lastName": "Smith",
-            "address": "ул. Пушкина, дом 1",
-            "metroStation": "2",
-            "phone": "+79997654321",
-            "rentTime": 2,
-            "deliveryDate": "2025-01-02",
-        }
-        response = requests.post(f"{self.base_url}orders", json=order_payload)
-        assert response.status_code == 201, f"Ошибка создания заказа: {response.text}"
-        assert "track" in response.json(), "Трек-код не присутствует в ответе"
+def create_unique_courier(base_url):
+    login = generate_random_string(10)
+    password = generate_random_string(10)
+    first_name = generate_random_string(10)
+    payload = {
+        "login": login,
+        "password": password,
+        "firstName": first_name
+    }
+    response = requests.post(f'{base_url}/courier', json=payload)
+    if response.status_code == 201:
+        return login, password, first_name
+    else:
+        return [], [], []
 
-    def test_get_orders_list(self):
-        """Получение списка заказов"""
-        response = requests.get(f"{self.base_url}orders")
-        assert response.status_code == 200, f"Ошибка получения списка заказов: {response.text}"
-        assert isinstance(response.json().get("orders"), list), "Список заказов имеет неверный формат"
+
+# ==========================================
+# Класс для тестов регистрации курьера
+# ==========================================
+
+class TestRegistration:
+    @allure.title("Создание курьера проходит успешно")
+    def test_create_courier_successfully(self, base_url):
+        with allure.step("Создаю курьера"):
+            login, password, first_name = create_unique_courier(base_url)
+        with allure.step("Проверяю статус ответа"):
+            assert login is not None, "Логин не был создан"
+            assert password is not None, "Пароль не был создан"
+            assert first_name is not None, "Имя не было создано"
+
+    @allure.title("Ошибка при регистрации без обязательных полей")
+    def test_create_courier_without_required_fields(self, base_url):
+        with allure.step("Отправляю запрос без обязательных полей"):
+            response = requests.post(f'{base_url}/courier', json={})
+        with allure.step("Проверяю статус ответа"):
+            assert response.status_code == 400
+            assert response.json()["message"] == "Недостаточно данных для создания учетной записи"
+
+    @allure.title("Ошибка при регистрации с уже существующим логином")
+    def test_create_duplicate_courier(self, base_url):
+        with allure.step("Создаю первого курьера"):
+            login, password, first_name = create_unique_courier(base_url)
+
+        with allure.step("Пытаюсь повторно создать курьера с тем же логином"):
+            payload = {
+                "login": login,
+                "password": password,
+                "firstName": first_name
+            }
+            response = requests.post(f'{base_url}/courier', json=payload)
+
+        with allure.step("Проверяю статус ответа"):
+            assert response.status_code == 400
+            assert response.json()["message"] == "Недостаточно данных для создания учетной записи"
+
+
+# ==========================================
+# Класс для тестов авторизации курьера
+# ==========================================
+
+class TestAuthentication:
+    @allure.title("Ошибка при авторизации с неверными данными")
+    def test_incorrect_authorization(self, base_url):
+        with allure.step("Отправляю запрос с неверными данными"):
+            response = requests.post(f'{base_url}/courier/login', json={"login": "wrong", "password": "wrong"})
+        with allure.step("Проверяю статус ответа"):
+            assert response.status_code == 400
+            assert response.json()["message"] == "Недостаточно данных для входа"
+
+    @allure.title("Успешная авторизация курьера")
+    def test_successful_authorization(self, base_url, registered_courier):
+        login, password, _ = registered_courier
+        with allure.step("Осуществляю авторизацию"):
+            response = requests.post(f'{base_url}/courier/login', json={"login": login, "password": password})
+        with allure.step("Проверяю статус ответа"):
+            assert response.status_code == 200
+            assert "id" in response.json()
+
+
+# ==========================================
+# Класс для тестов работы с заказами
+# ==========================================
+
+class TestOrders:
+    ORDER_PAYLOADS = [
+        ({"firstName": "John", "lastName": "Doe", "address": "ул. Ленина, дом 1", "metroStation": "1",
+          "phone": "+79991234567", "rentTime": 1, "deliveryDate": "2025-01-01", "color": ["BLACK"]},
+         "Создание заказа с выбором цвета"),
+        ({"firstName": "Jane", "lastName": "Smith", "address": "ул. Пушкина, дом 1", "metroStation": "2",
+          "phone": "+79997654321", "rentTime": 2, "deliveryDate": "2025-01-02"}, "Создание заказа без выбора цвета"),
+    ]
+
+    @pytest.mark.parametrize("payload,title", ORDER_PAYLOADS)
+    @allure.title("{title}")
+    def test_create_order(self, base_url, payload, title):
+        with allure.step("Создаю заказ"):
+            response = requests.post(f'{base_url}/orders', json=payload)
+        with allure.step("Проверяю статус ответа"):
+            assert response.status_code == 201
+            assert "track" in response.json()
+
+    @allure.title("Получение списка заказов")
+    def test_get_orders_list(self, base_url):
+        with allure.step("Получаю список заказов"):
+            response = requests.get(f'{base_url}/orders')
+        with allure.step("Проверяю статус ответа"):
+            assert response.status_code == 200
+            assert isinstance(response.json()["orders"], list)
